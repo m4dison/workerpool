@@ -13,6 +13,7 @@ type WorkerPool struct {
 	err         error
 	cancel      context.CancelFunc
 	ctx         context.Context
+	done        chan struct{}
 }
 
 func New(ctx context.Context, workerCount int) *WorkerPool {
@@ -22,6 +23,7 @@ func New(ctx context.Context, workerCount int) *WorkerPool {
 		taskQueue:   make(chan func(ctx context.Context) error),
 		cancel:      cancel,
 		ctx:         ctx,
+		done:        make(chan struct{}),
 	}
 	pool.start(ctx)
 	return pool
@@ -32,13 +34,21 @@ func (p *WorkerPool) start(ctx context.Context) {
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
-			for task := range p.taskQueue {
-				if err := task(ctx); err != nil {
-					p.errOnce.Do(func() {
-						p.err = err
-						p.cancel()
-					})
-					break
+			for {
+				select {
+				case task, ok := <-p.taskQueue:
+					if !ok {
+						return
+					}
+					if err := task(ctx); err != nil {
+						p.errOnce.Do(func() {
+							p.err = err
+							p.cancel()
+						})
+						return
+					}
+				case <-p.done:
+					return
 				}
 			}
 		}()
@@ -55,5 +65,6 @@ func (p *WorkerPool) Run(task func(ctx context.Context) error) {
 func (p *WorkerPool) Wait() error {
 	close(p.taskQueue)
 	p.wg.Wait()
+	close(p.done)
 	return p.err
 }

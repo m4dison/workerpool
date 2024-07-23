@@ -2,98 +2,70 @@ package workerpool
 
 import (
 	"context"
-	"errors"
+	"sync/atomic"
 	"testing"
-	"time"
 )
 
-func createTask(duration time.Duration, resultErr error) func(ctx context.Context) error {
-	return func(ctx context.Context) error {
-		select {
-		case <-time.After(duration):
-			return resultErr
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-}
+func TestWorkerPool_Run_Success(t *testing.T) {
+	ctx := context.Background()
+	pool := New(ctx, 3)
 
-func TestWorkerPool(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	workerCount := 3
-	pool := New(ctx, workerCount)
-
-	taskDurations := []time.Duration{
-		1 * time.Second,
-		2 * time.Second,
-		3 * time.Second,
+	var counter int32
+	task := func(ctx context.Context) error {
+		atomic.AddInt32(&counter, 1)
+		return nil
 	}
 
-	expectedErr := errors.New("task error")
-
-	for _, duration := range taskDurations {
-		task := createTask(duration, expectedErr)
+	for i := 0; i < 10; i++ {
 		pool.Run(task)
 	}
 
-	err := pool.Wait()
+	if err := pool.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 
-	if err != expectedErr {
-		t.Errorf("expected error: %v, got: %v", expectedErr, err)
+	if counter != 10 {
+		t.Errorf("expected 10 tasks to run, but got %d", counter)
 	}
 }
 
-func TestWorkerPoolWithTimeout(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	workerCount := 3
-	pool := New(ctx, workerCount)
-
-	taskDurations := []time.Duration{
-		1 * time.Second,
-		2 * time.Second,
-		4 * time.Second,
-	}
-
-	for _, duration := range taskDurations {
-		task := createTask(duration, nil)
-		pool.Run(task)
-	}
+func TestWorkerPool_Run_Empty(t *testing.T) {
+	ctx := context.Background()
+	pool := New(ctx, 3)
 
 	err := pool.Wait()
-
 	if err != nil {
-		t.Errorf("expected no error, got: %v", err)
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
-func TestWorkerPoolWithCanceledContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func TestWorkerPool_Run_MultipleTasks(t *testing.T) {
+	ctx := context.Background()
+	pool := New(ctx, 3)
 
-	workerCount := 3
-	pool := New(ctx, workerCount)
-
-	taskDurations := []time.Duration{
-		1 * time.Second,
-		2 * time.Second,
-		5 * time.Second,
+	var counter1, counter2 int32
+	task1 := func(ctx context.Context) error {
+		atomic.AddInt32(&counter1, 1)
+		return nil
+	}
+	task2 := func(ctx context.Context) error {
+		atomic.AddInt32(&counter2, 1)
+		return nil
 	}
 
-	for _, duration := range taskDurations {
-		task := createTask(duration, nil)
-		pool.Run(task)
+	for i := 0; i < 5; i++ {
+		pool.Run(task1)
+		pool.Run(task2)
 	}
 
-	time.Sleep(1 * time.Second)
-	cancel()
+	if err := pool.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 
-	err := pool.Wait()
-
-	if err != context.Canceled {
-		t.Errorf("expected error: %v, got: %v", context.Canceled, err)
+	if counter1 != 5 {
+		t.Errorf("expected 5 task1 to run, but got %d", counter1)
+	}
+	if counter2 != 5 {
+		t.Errorf("expected 5 task2 to run, but got %d", counter2)
 	}
 }

@@ -12,6 +12,7 @@ type WorkerPool struct {
 	errOnce     sync.Once
 	err         error
 	cancel      context.CancelFunc
+	ctx         context.Context
 }
 
 func New(ctx context.Context, workerCount int) *WorkerPool {
@@ -20,6 +21,7 @@ func New(ctx context.Context, workerCount int) *WorkerPool {
 		workerCount: workerCount,
 		taskQueue:   make(chan func(ctx context.Context) error),
 		cancel:      cancel,
+		ctx:         ctx,
 	}
 	pool.start(ctx)
 	return pool
@@ -46,7 +48,7 @@ func (p *WorkerPool) start(ctx context.Context) {
 func (p *WorkerPool) Run(task func(ctx context.Context) error) {
 	select {
 	case p.taskQueue <- task:
-	case <-context.Background().Done():
+	case <-p.ctx.Done():
 	}
 }
 
